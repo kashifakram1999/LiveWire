@@ -1,0 +1,9 @@
+Django
+djangorestframework
+django-environ
+django-allauth
+django-rest-auth
+django-cors-headers
+channels
+channels-redis
+psycopg2-binary
