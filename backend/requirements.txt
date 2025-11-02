@@ -1,9 +1,11 @@
 Django
 djangorestframework
 django-environ
+python-dotenv
 django-allauth
 django-rest-auth
 django-cors-headers
 channels
 channels-redis
 psycopg2-binary
+djangorestframework-simplejwt

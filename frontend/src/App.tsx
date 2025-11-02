@@ -1,7 +1,31 @@
-export default function App() {
+import { Route, Routes } from "react-router-dom"
+
+import { DashboardLayout } from "./components/Layout"
+import { AuthProvider } from "./context/AuthContext"
+import { ChatPage } from "./pages/ChatPage"
+import { LoginPage } from "./pages/LoginPage"
+import { RegisterPage } from "./pages/RegisterPage"
+import { ProtectedRoute } from "./routes/ProtectedRoute"
+
+const App = () => {
   return (
-    <div className="h-screen flex items-center justify-center bg-gray-900 text-white text-9xl font-bold">
-      🚀 Tailwind + React + Vite is working!
-    </div>
+    <AuthProvider>
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <DashboardLayout />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<ChatPage />} />
+        </Route>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
+      </Routes>
+    </AuthProvider>
   )
 }
+
+export default App
