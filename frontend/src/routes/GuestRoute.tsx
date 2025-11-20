@@ -4,19 +4,19 @@ import type { ReactElement } from "react"
 import { useAuth } from "../context/AuthContext"
 import { RouteLoader } from "./RouteLoader"
 
-type ProtectedRouteProps = {
+type GuestRouteProps = {
   children: ReactElement
 }
 
-export const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
+export const GuestRoute = ({ children }: GuestRouteProps) => {
   const { user, isLoading } = useAuth()
 
   if (isLoading) {
     return <RouteLoader />
   }
 
-  if (!user) {
-    return <Navigate to="/login" replace />
+  if (user) {
+    return <Navigate to="/" replace />
   }
 
   return children

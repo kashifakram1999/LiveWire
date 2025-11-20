@@ -1,4 +1,5 @@
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -23,6 +24,15 @@ class CurrentUserView(APIView):
     permission_classes = (IsAuthenticated,)
 
     def get(self, request):
+        return Response(UserSerializer(request.user).data)
+
+
+class UserPresenceView(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request):
+        request.user.last_active_at = timezone.now()
+        request.user.save(update_fields=["last_active_at"])
         return Response(UserSerializer(request.user).data)
 
 

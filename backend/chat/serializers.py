@@ -10,11 +10,20 @@ from .models import Conversation, ConversationParticipant, Message
 User = get_user_model()
 
 
+class ConversationParticipantStateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ConversationParticipant
+        fields = ("user_id", "last_seen_at", "joined_at")
+        read_only_fields = fields
+
+
 class ConversationSerializer(serializers.ModelSerializer):
     participants = UserSerializer(many=True, read_only=True)
     participant_ids = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.all(), many=True, write_only=True
     )
+    participant_states = serializers.SerializerMethodField()
+    unread_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Conversation
@@ -26,8 +35,17 @@ class ConversationSerializer(serializers.ModelSerializer):
             "updated_at",
             "participants",
             "participant_ids",
+            "participant_states",
+            "unread_count",
         )
-        read_only_fields = ("id", "created_at", "updated_at", "participants")
+        read_only_fields = (
+            "id",
+            "created_at",
+            "updated_at",
+            "participants",
+            "participant_states",
+            "unread_count",
+        )
 
     def validate(self, attrs):
         participant_ids = attrs.get("participant_ids") or []
@@ -74,6 +92,22 @@ class ConversationSerializer(serializers.ModelSerializer):
                 conversation=conversation, user_id__in=to_remove
             ).delete()
 
+    def get_participant_states(self, obj):
+        participant_qs = obj.conversation_participants.all()
+        return ConversationParticipantStateSerializer(participant_qs, many=True).data
+
+    def get_unread_count(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return 0
+        participant = obj.conversation_participants.filter(user=request.user).first()
+        if not participant:
+            return 0
+        last_seen_at = participant.last_seen_at
+        if not last_seen_at:
+            return obj.messages.count()
+        return obj.messages.filter(created_at__gt=last_seen_at).count()
+
 
 class MessageSerializer(serializers.ModelSerializer):
     sender = UserSerializer(read_only=True)
@@ -90,7 +124,14 @@ class MessageSerializer(serializers.ModelSerializer):
             "updated_at",
             "is_edited",
         )
-        read_only_fields = ("id", "sender", "created_at", "updated_at", "is_edited")
+        read_only_fields = (
+            "id",
+            "conversation",
+            "sender",
+            "created_at",
+            "updated_at",
+            "is_edited",
+        )
 
     def create(self, validated_data):
         request = self.context["request"]

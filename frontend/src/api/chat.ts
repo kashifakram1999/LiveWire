@@ -23,6 +23,11 @@ export const updateConversation = async (
   return data
 }
 
+export const markConversationRead = async (conversationId: number) => {
+  const { data } = await apiClient.post<Conversation>(`/chat/conversations/${conversationId}/read/`)
+  return data
+}
+
 export const listMessages = async (conversationId: number): Promise<Message[]> => {
   const { data } = await apiClient.get<Message[]>(`/chat/conversations/${conversationId}/messages/`)
   return data

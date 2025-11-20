@@ -1,3 +1,6 @@
+from datetime import timedelta
+
+from django.utils import timezone
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
@@ -5,6 +8,8 @@ from .models import User
 
 
 class UserSerializer(serializers.ModelSerializer):
+    is_online = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         fields = (
@@ -14,8 +19,16 @@ class UserSerializer(serializers.ModelSerializer):
             "avatar_url",
             "is_email_verified",
             "date_joined",
+            "last_active_at",
+            "is_online",
         )
-        read_only_fields = ("id", "is_email_verified", "date_joined")
+        read_only_fields = ("id", "is_email_verified", "date_joined", "last_active_at", "is_online")
+
+    def get_is_online(self, obj):
+        if not obj.last_active_at:
+            return False
+        threshold = timezone.now() - timedelta(minutes=2)
+        return obj.last_active_at >= threshold
 
 
 class RegisterSerializer(serializers.ModelSerializer):

@@ -5,6 +5,8 @@ export type User = {
   avatar_url: string | null
   is_email_verified: boolean
   date_joined: string
+  last_active_at: string | null
+  is_online: boolean
 }
 
 export type AuthResponse = {
@@ -26,6 +28,12 @@ export type RegisterPayload = {
   avatar_url?: string
 }
 
+export type ConversationParticipantState = {
+  user_id: number
+  last_seen_at: string | null
+  joined_at: string
+}
+
 export type Conversation = {
   id: number
   title: string
@@ -33,6 +41,8 @@ export type Conversation = {
   created_at: string
   updated_at: string
   participants: User[]
+  participant_states: ConversationParticipantState[]
+  unread_count: number
 }
 
 export type Message = {
