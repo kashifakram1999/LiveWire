@@ -26,11 +26,20 @@ export const ConversationsPanel = ({
   const { theme } = useTheme()
   const isDark = theme === "dark"
   const [search, setSearch] = useState("")
+  const [showGroupsOnly, setShowGroupsOnly] = useState(false)
+  const [showUnreadOnly, setShowUnreadOnly] = useState(false)
 
   const filteredConversations = useMemo(() => {
-    if (!search.trim()) return conversations
+    let list = conversations
+    if (showGroupsOnly) {
+      list = list.filter((conversation) => conversation.is_group)
+    }
+    if (showUnreadOnly) {
+      list = list.filter((conversation) => (conversation.unread_count ?? 0) > 0)
+    }
+    if (!search.trim()) return list
     const query = search.toLowerCase()
-    return conversations.filter((conversation) => {
+    return list.filter((conversation) => {
       const title = renderConversationTitle(conversation).toLowerCase()
       const participantMatch = conversation.participants.some((participant) => {
         const candidate = participant.display_name ?? participant.email
@@ -38,7 +47,7 @@ export const ConversationsPanel = ({
       })
       return title.includes(query) || participantMatch
     })
-  }, [conversations, search, renderConversationTitle])
+  }, [conversations, renderConversationTitle, search, showGroupsOnly, showUnreadOnly])
 
   const formatRelativeTime = (timestamp: string) => {
     const now = Date.now()
@@ -97,18 +106,54 @@ export const ConversationsPanel = ({
             New
           </button>
         </div>
-        <label className="relative block">
-          <span className="absolute inset-y-0 left-4 flex items-center text-slate-400">
-            <FiSearch className="h-4 w-4" />
-          </span>
-          <input
-            type="text"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search by name or email..."
-            className="w-full rounded-2xl border border-white/40 bg-white/90 py-3 pl-12 pr-4 text-sm text-slate-900 shadow-inner placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none dark:border-white/10 dark:bg-slate-900/70 dark:text-white"
-          />
-        </label>
+        <div className="space-y-2">
+          <label className="relative block">
+            <span className="absolute inset-y-0 left-4 flex items-center text-slate-400">
+              <FiSearch className="h-4 w-4" />
+            </span>
+            <input
+              type="text"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search by name or email..."
+              className="w-full rounded-2xl border border-white/40 bg-white/90 py-3 pl-12 pr-4 text-sm text-slate-900 shadow-inner placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none dark:border-white/10 dark:bg-slate-900/70 dark:text-white"
+            />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setShowGroupsOnly((prev) => !prev)}
+              className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide backdrop-blur ${
+                showGroupsOnly
+                  ? "border-white/70 bg-white/40 text-indigo-600 shadow-lg dark:border-white/20 dark:bg-slate-900/50 dark:text-indigo-300"
+                  : "border-white/30 bg-white/15 text-slate-600 shadow-sm dark:border-white/10 dark:bg-slate-900/40 dark:text-slate-200"
+              }`}
+            >
+              Groups
+              {showGroupsOnly && (
+                <span className="rounded-full bg-indigo-500/10 px-1.5 py-0.5 text-[9px] text-indigo-600 dark:text-indigo-200">
+                  ON
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowUnreadOnly((prev) => !prev)}
+              className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide backdrop-blur ${
+                showUnreadOnly
+                  ? "border-white/70 bg-white/40 text-indigo-600 shadow-lg dark:border-white/20 dark:bg-slate-900/50 dark:text-indigo-300"
+                  : "border-white/30 bg-white/15 text-slate-600 shadow-sm dark:border-white/10 dark:bg-slate-900/40 dark:text-slate-200"
+              }`}
+            >
+              Unread
+              {showUnreadOnly && (
+                <span className="rounded-full bg-indigo-500/10 px-1.5 py-0.5 text-[9px] text-indigo-600 dark:text-indigo-200">
+                  ON
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
       </header>
       <div className="scrollbar-hidden flex-1 min-h-0 overflow-y-auto pr-1" style={{ maxHeight: listHeight }}>
         {filteredConversations.length === 0 ? (

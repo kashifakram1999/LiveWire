@@ -51,6 +51,9 @@ export type Message = {
   sender: User
   body: string
   attachment_url: string | null
+  audio_url: string | null
+  audio_mime_type: string | null
+  audio_duration_seconds: number | null
   created_at: string
   updated_at: string
   is_edited: boolean

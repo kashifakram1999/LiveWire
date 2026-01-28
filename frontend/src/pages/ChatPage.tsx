@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { FiSend } from "react-icons/fi"
+import { FiMic, FiPause, FiPlay, FiSend, FiStopCircle, FiTrash2 } from "react-icons/fi"
 import type { ChangeEvent, FormEvent } from "react"
 
 import {
@@ -73,6 +73,11 @@ export const ChatPage = () => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [typingStates, setTypingStates] = useState<Record<number, Record<number, string>>>({})
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordingDuration, setRecordingDuration] = useState(0)
+  const [recorderError, setRecorderError] = useState<string | null>(null)
+  const [isSendingAudio, setIsSendingAudio] = useState(false)
+  const [audioPlaybackStates, setAudioPlaybackStates] = useState<Record<number, { isPlaying: boolean; progress: number }>>({})
   const manualSelectionClearedRef = useRef(false)
   const selectedConversationId = selectedConversationIdState
   const updateSelectedConversationId = useCallback(
@@ -100,6 +105,14 @@ export const ChatPage = () => {
   const typingTimeoutsRef = useRef<Record<number, Record<number, ReturnType<typeof setTimeout>>>>({})
   const typingThrottleRef = useRef<number>(0)
   const markReadInFlightRef = useRef<Record<number, boolean>>({})
+  const previousConversationIdRef = useRef<number | null>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const recordingStreamRef = useRef<MediaStream | null>(null)
+  const recordingChunksRef = useRef<Blob[]>([])
+  const recordingStartRef = useRef<number>(0)
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const shouldSendRecordingRef = useRef(true)
+  const audioRefs = useRef<Record<number, HTMLAudioElement | null>>({})
   const TYPING_THROTTLE_MS = 1200
   const clientIdRef = useRef<string>("")
   if (!clientIdRef.current) {
@@ -120,6 +133,16 @@ export const ChatPage = () => {
     }
     const protocol = baseUrl.protocol === "https:" ? "wss:" : "ws:"
     return `${protocol}//${baseUrl.host}/ws/chat/${conversationId}/`
+  }, [])
+
+  const formatDurationLabel = useCallback((seconds: number | null | undefined) => {
+    if (!seconds || Number.isNaN(seconds)) {
+      return "00:00"
+    }
+    const totalSeconds = Math.max(0, Math.round(seconds))
+    const mins = Math.floor(totalSeconds / 60)
+    const secs = totalSeconds % 60
+    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`
   }, [])
 
   const scrollToBottom = useCallback(() => {
@@ -530,9 +553,56 @@ export const ChatPage = () => {
     selectedConversationId,
   ])
 
+  const stopRecordingTimer = useCallback(() => {
+    if (recordingTimerRef.current) {
+      window.clearInterval(recordingTimerRef.current)
+      recordingTimerRef.current = null
+    }
+  }, [])
+
+  const cleanupRecordingResources = useCallback(() => {
+    stopRecordingTimer()
+    if (recordingStreamRef.current) {
+      recordingStreamRef.current.getTracks().forEach((track) => track.stop())
+      recordingStreamRef.current = null
+    }
+    mediaRecorderRef.current = null
+    recordingChunksRef.current = []
+    recordingStartRef.current = 0
+    setIsRecording(false)
+    setRecordingDuration(0)
+  }, [stopRecordingTimer])
+
   useEffect(() => {
     return () => {
       Object.values(conversationWatchersRef.current).forEach((socket) => socket.close())
+    }
+  }, [])
+
+  useEffect(() => {
+    const previousConversationId = previousConversationIdRef.current
+    if (previousConversationId !== null && previousConversationId !== selectedConversationId && isRecording) {
+      shouldSendRecordingRef.current = false
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop()
+      }
+    }
+    previousConversationIdRef.current = selectedConversationId
+  }, [isRecording, selectedConversationId])
+
+  useEffect(() => {
+    return () => {
+      shouldSendRecordingRef.current = false
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop()
+      }
+      cleanupRecordingResources()
+    }
+  }, [cleanupRecordingResources])
+
+  useEffect(() => {
+    return () => {
+      Object.values(audioRefs.current).forEach((audioEl) => audioEl?.pause())
     }
   }, [])
 
@@ -541,14 +611,8 @@ export const ChatPage = () => {
     [conversations, selectedConversationId],
   )
 
-  const handleSendMessage = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!selectedConversationId || !composerValue.trim()) return
-
-    const pendingMessage = composerValue
-    setComposerValue("")
-    try {
-      const newMessage = await sendMessage(selectedConversationId, { body: pendingMessage })
+  const applyNewOutgoingMessage = useCallback(
+    (newMessage: Message) => {
       setMessages((prev) => {
         const existingIndex = prev.findIndex((message) => message.id === newMessage.id)
         if (existingIndex !== -1) {
@@ -559,6 +623,7 @@ export const ChatPage = () => {
         return [...prev, newMessage]
       })
       setConversations((prev) => {
+        if (!selectedConversationId) return prev
         const updated = prev.map((conversation) =>
           conversation.id === selectedConversationId
             ? { ...conversation, updated_at: newMessage.created_at }
@@ -568,6 +633,40 @@ export const ChatPage = () => {
         return updated
       })
       scrollToBottom()
+    },
+    [scrollToBottom, selectedConversationId],
+  )
+
+  const sendVoiceMessage = useCallback(
+    async (blob: Blob, durationSeconds: number) => {
+      if (!selectedConversationId) return
+      setError(null)
+      setIsSendingAudio(true)
+      try {
+        const newMessage = await sendMessage(selectedConversationId, {
+          audioBlob: blob,
+          audioDurationSeconds: Number(durationSeconds.toFixed(2)),
+          audioMimeType: blob.type || "audio/webm",
+        })
+        applyNewOutgoingMessage(newMessage)
+      } catch (err) {
+        setError("Unable to send voice message.")
+      } finally {
+        setIsSendingAudio(false)
+      }
+    },
+    [applyNewOutgoingMessage, selectedConversationId],
+  )
+
+  const handleSendMessage = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!selectedConversationId || !composerValue.trim()) return
+
+    const pendingMessage = composerValue
+    setComposerValue("")
+    try {
+      const newMessage = await sendMessage(selectedConversationId, { body: pendingMessage })
+      applyNewOutgoingMessage(newMessage)
     } catch (err) {
       setError("Unable to send message.")
     } finally {
@@ -590,6 +689,113 @@ export const ChatPage = () => {
       sendTypingStatus(true)
     }
   }
+
+  const handleStartRecording = useCallback(async () => {
+    if (!selectedConversationId || isRecording) return
+    setRecorderError(null)
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setRecorderError("Voice messages are not supported in this browser.")
+      return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      recordingStreamRef.current = stream
+      const recorder = new MediaRecorder(stream)
+      mediaRecorderRef.current = recorder
+      recordingChunksRef.current = []
+      shouldSendRecordingRef.current = true
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          recordingChunksRef.current.push(event.data)
+        }
+      }
+
+      recorder.onerror = () => {
+        setRecorderError("Unable to record audio. Please try again.")
+        cleanupRecordingResources()
+      }
+
+      recorder.onstop = () => {
+        const chunks = recordingChunksRef.current.slice()
+        const shouldSend = shouldSendRecordingRef.current
+        const elapsedSeconds = (Date.now() - recordingStartRef.current) / 1000
+        cleanupRecordingResources()
+        shouldSendRecordingRef.current = true
+        if (shouldSend && chunks.length > 0) {
+          const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" })
+          void sendVoiceMessage(blob, elapsedSeconds > 0 ? elapsedSeconds : recordingDuration)
+        }
+      }
+
+      recordingStartRef.current = Date.now()
+      setRecordingDuration(0)
+      setIsRecording(true)
+      recorder.start()
+      recordingTimerRef.current = window.setInterval(() => {
+        setRecordingDuration((Date.now() - recordingStartRef.current) / 1000)
+      }, 200)
+    } catch (err) {
+      setRecorderError("Microphone permission denied. Please enable access to record voice notes.")
+      cleanupRecordingResources()
+    }
+  }, [cleanupRecordingResources, isRecording, recordingDuration, selectedConversationId, sendVoiceMessage])
+
+  const handleStopRecording = useCallback(() => {
+    if (!isRecording) return
+    shouldSendRecordingRef.current = true
+    const recorder = mediaRecorderRef.current
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop()
+    }
+  }, [isRecording])
+
+  const handleCancelRecording = useCallback(() => {
+    if (!isRecording) return
+    shouldSendRecordingRef.current = false
+    const recorder = mediaRecorderRef.current
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop()
+    } else {
+      cleanupRecordingResources()
+      shouldSendRecordingRef.current = true
+    }
+  }, [cleanupRecordingResources, isRecording])
+
+  const syncAudioPlaybackState = useCallback((messageId: number, audioEl: HTMLAudioElement) => {
+    const duration = audioEl.duration || 0
+    const progress = duration ? (audioEl.currentTime / duration) * 100 : 0
+    setAudioPlaybackStates((prev) => ({
+      ...prev,
+      [messageId]: {
+        isPlaying: !audioEl.paused,
+        progress,
+      },
+    }))
+  }, [])
+
+  const toggleAudioPlayback = useCallback((messageId: number) => {
+    const target = audioRefs.current[messageId]
+    if (!target) return
+    if (target.paused) {
+      Object.entries(audioRefs.current).forEach(([id, audioEl]) => {
+        if (Number(id) !== messageId) {
+          audioEl?.pause()
+        }
+      })
+      target
+        .play()
+        .then(() => {
+          syncAudioPlaybackState(messageId, target)
+        })
+        .catch(() => {
+          setRecorderError("Unable to play audio at the moment.")
+        })
+    } else {
+      target.pause()
+    }
+  }, [syncAudioPlaybackState])
+
 
   const handleCreateConversation = useCallback(
     async (payload: { title: string; participantIds: number[] }) => {
@@ -827,6 +1033,14 @@ export const ChatPage = () => {
                               new Date(state.last_seen_at).getTime() >=
                                 new Date(message.created_at).getTime(),
                           )
+                      const playbackState = audioPlaybackStates[message.id] ?? { isPlaying: false, progress: 0 }
+                      const audioElement = audioRefs.current[message.id]
+                      const displayedDuration =
+                        message.audio_duration_seconds && message.audio_duration_seconds > 0
+                          ? message.audio_duration_seconds
+                          : audioElement && Number.isFinite(audioElement.duration)
+                            ? audioElement.duration
+                            : undefined
                       return (
                         <div
                           key={message.id}
@@ -849,7 +1063,63 @@ export const ChatPage = () => {
                                 {message.sender.display_name ?? message.sender.email}
                               </p>
                             )}
-                            <p>{message.body}</p>
+                            {message.audio_url ? (
+                              <div className="flex flex-col gap-2">
+                                <div className="flex items-center gap-3">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleAudioPlayback(message.id)}
+                                    className={`flex h-10 w-10 items-center justify-center rounded-full border ${
+                                      isOwnMessage
+                                        ? "border-white/40 text-white"
+                                        : "border-indigo-200 text-indigo-600 dark:border-white/20 dark:text-white"
+                                    }`}
+                                  >
+                                    {playbackState.isPlaying ? <FiPause className="h-5 w-5" /> : <FiPlay className="h-5 w-5" />}
+                                  </button>
+                                  <div className="flex-1">
+                                    <div
+                                      className={`h-1.5 w-full overflow-hidden rounded-full ${
+                                        isOwnMessage ? "bg-white/30" : "bg-indigo-100 dark:bg-white/20"
+                                      }`}
+                                    >
+                                      <div
+                                        className={`h-full rounded-full ${
+                                          isOwnMessage ? "bg-white" : "bg-indigo-500 dark:bg-indigo-300"
+                                        }`}
+                                        style={{ width: `${playbackState.progress ?? 0}%` }}
+                                      />
+                                    </div>
+                                    <p className={`mt-1 text-xs ${isOwnMessage ? "text-white/80" : detailText}`}>
+                                      {formatDurationLabel(displayedDuration)}
+                                    </p>
+                                  </div>
+                                  <audio
+                                    ref={(el) => {
+                                      if (el) {
+                                        audioRefs.current[message.id] = el
+                                      } else {
+                                        delete audioRefs.current[message.id]
+                                      }
+                                    }}
+                                    src={message.audio_url ?? undefined}
+                                    preload="metadata"
+                                    onPlay={(event) => syncAudioPlaybackState(message.id, event.currentTarget)}
+                                    onPause={(event) => syncAudioPlaybackState(message.id, event.currentTarget)}
+                                    onEnded={(event) => {
+                                      event.currentTarget.currentTime = 0
+                                      syncAudioPlaybackState(message.id, event.currentTarget)
+                                    }}
+                                    onTimeUpdate={(event) => syncAudioPlaybackState(message.id, event.currentTarget)}
+                                    onLoadedMetadata={(event) => syncAudioPlaybackState(message.id, event.currentTarget)}
+                                    className="hidden"
+                                  />
+                                </div>
+                                {message.body ? <p>{message.body}</p> : null}
+                              </div>
+                            ) : (
+                              <p>{message.body}</p>
+                            )}
                             <p className={`mt-1 text-xs ${isOwnMessage ? "text-white/80" : detailText}`}>
                               {new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                               {message.is_edited ? " • edited" : ""}
@@ -885,27 +1155,64 @@ export const ChatPage = () => {
                 onSubmit={handleSendMessage}
                 className={`flex flex-col gap-3 rounded-[28px] p-3 shadow-xl ring-1 ${composerShellClasses}`}
               >
-                <div className="flex items-center gap-3">
-                  <div className="hidden rounded-full border border-white/60 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:border-white/20 dark:text-slate-300 md:flex md:items-center md:gap-2">
+                <div className="flex w-full flex-col gap-3 md:flex-row md:items-center">
+                  <div className="hidden whitespace-nowrap rounded-full border border-white/60 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:border-white/20 dark:text-slate-300 md:flex md:items-center md:gap-2">
                     LiveWire
                   </div>
-                  <input
-                    type="text"
-                    required
-                    value={composerValue}
-                    onChange={handleComposerChange}
-                    onBlur={() => sendTypingStatus(false)}
-                    placeholder="Type your message..."
-                    className={`flex-1 rounded-full border px-5 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-500 ${composerInput}`}
-                  />
-                  <button
-                    type="submit"
-                    className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-2xl bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg transition hover:shadow-xl"
-                  >
-                    <span className="sr-only">Send</span>
-                    <FiSend className="h-5 w-5" />
-                  </button>
+                  <div className="flex w-full items-center gap-2">
+                    <input
+                      type="text"
+                      value={composerValue}
+                      onChange={handleComposerChange}
+                      onBlur={() => sendTypingStatus(false)}
+                      placeholder="Type your message..."
+                      className={`flex-1 rounded-full border px-5 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-500 ${composerInput}`}
+                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={isRecording ? handleStopRecording : handleStartRecording}
+                        className={`flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full border text-white shadow-lg transition md:rounded-2xl ${
+                          isRecording
+                            ? "border-red-200 bg-red-500 hover:bg-red-400"
+                            : "border-indigo-200 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-400 hover:to-purple-400"
+                        }`}
+                      >
+                        <span className="sr-only">{isRecording ? "Stop recording" : "Record voice message"}</span>
+                        {isRecording ? <FiStopCircle className="h-5 w-5" /> : <FiMic className="h-5 w-5" />}
+                      </button>
+                      {isRecording && (
+                        <button
+                          type="button"
+                          onClick={handleCancelRecording}
+                          className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full border border-white/40 text-white/90 transition hover:bg-white/10 md:rounded-2xl"
+                        >
+                          <span className="sr-only">Cancel recording</span>
+                          <FiTrash2 className="h-5 w-5" />
+                        </button>
+                      )}
+                      <button
+                        type="submit"
+                        disabled={!composerValue.trim()}
+                        className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg transition hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-60 md:rounded-2xl"
+                      >
+                        <span className="sr-only">Send</span>
+                        <FiSend className="h-5 w-5" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
+                {isRecording && (
+                  <div className="flex items-center gap-2 rounded-full bg-red-50 px-4 py-2 text-xs font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-100">
+                    <span className="inline-flex h-2 w-2 rounded-full bg-red-500"></span>
+                    <span>Recording...</span>
+                    <span>{formatDurationLabel(recordingDuration)}</span>
+                  </div>
+                )}
+                {isSendingAudio && (
+                  <p className="text-xs font-medium text-indigo-500 dark:text-indigo-200">Uploading voice message...</p>
+                )}
+                {recorderError && <p className="text-sm text-amber-500">{recorderError}</p>}
                 {error && <p className="text-sm text-red-500">{error}</p>}
               </form>
             </footer>
