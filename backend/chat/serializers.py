@@ -10,11 +10,20 @@ from .models import Conversation, ConversationParticipant, Message
 User = get_user_model()
 
 
+class ConversationParticipantStateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ConversationParticipant
+        fields = ("user_id", "last_seen_at", "joined_at")
+        read_only_fields = fields
+
+
 class ConversationSerializer(serializers.ModelSerializer):
     participants = UserSerializer(many=True, read_only=True)
     participant_ids = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.all(), many=True, write_only=True
     )
+    participant_states = serializers.SerializerMethodField()
+    unread_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Conversation
@@ -26,8 +35,17 @@ class ConversationSerializer(serializers.ModelSerializer):
             "updated_at",
             "participants",
             "participant_ids",
+            "participant_states",
+            "unread_count",
         )
-        read_only_fields = ("id", "created_at", "updated_at", "participants")
+        read_only_fields = (
+            "id",
+            "created_at",
+            "updated_at",
+            "participants",
+            "participant_states",
+            "unread_count",
+        )
 
     def validate(self, attrs):
         participant_ids = attrs.get("participant_ids") or []
@@ -74,9 +92,27 @@ class ConversationSerializer(serializers.ModelSerializer):
                 conversation=conversation, user_id__in=to_remove
             ).delete()
 
+    def get_participant_states(self, obj):
+        participant_qs = obj.conversation_participants.all()
+        return ConversationParticipantStateSerializer(participant_qs, many=True).data
+
+    def get_unread_count(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return 0
+        participant = obj.conversation_participants.filter(user=request.user).first()
+        if not participant:
+            return 0
+        last_seen_at = participant.last_seen_at
+        if not last_seen_at:
+            return obj.messages.count()
+        return obj.messages.filter(created_at__gt=last_seen_at).count()
+
 
 class MessageSerializer(serializers.ModelSerializer):
     sender = UserSerializer(read_only=True)
+    audio_file = serializers.FileField(write_only=True, required=False, allow_empty_file=False)
+    audio_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Message
@@ -86,11 +122,31 @@ class MessageSerializer(serializers.ModelSerializer):
             "sender",
             "body",
             "attachment_url",
+            "audio_file",
+            "audio_url",
+            "audio_mime_type",
+            "audio_duration_seconds",
             "created_at",
             "updated_at",
             "is_edited",
         )
-        read_only_fields = ("id", "sender", "created_at", "updated_at", "is_edited")
+        read_only_fields = (
+            "id",
+            "conversation",
+            "sender",
+            "audio_url",
+            "created_at",
+            "updated_at",
+            "is_edited",
+        )
+
+    def validate(self, attrs):
+        body = attrs.get("body", "")
+        attachment_url = attrs.get("attachment_url", "")
+        audio_file = attrs.get("audio_file")
+        if not (body or attachment_url or audio_file or (self.instance and self.instance.audio_file)):
+            raise serializers.ValidationError("Provide text, attachment, or an audio recording.")
+        return attrs
 
     def create(self, validated_data):
         request = self.context["request"]
@@ -102,3 +158,16 @@ class MessageSerializer(serializers.ModelSerializer):
             validated_data["is_edited"] = True
             validated_data["updated_at"] = timezone.now()
         return super().update(instance, validated_data)
+
+    def get_audio_url(self, obj):
+        audio = getattr(obj, "audio_file", None)
+        if not audio:
+            return None
+        try:
+            url = audio.url
+        except ValueError:
+            return None
+        request = self.context.get("request")
+        if request is not None:
+            return request.build_absolute_uri(url)
+        return url

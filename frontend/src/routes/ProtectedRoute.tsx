@@ -2,6 +2,7 @@ import { Navigate } from "react-router-dom"
 import type { ReactElement } from "react"
 
 import { useAuth } from "../context/AuthContext"
+import { RouteLoader } from "./RouteLoader"
 
 type ProtectedRouteProps = {
   children: ReactElement
@@ -11,11 +12,7 @@ export const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
   const { user, isLoading } = useAuth()
 
   if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-900 text-white">
-        Loading...
-      </div>
-    )
+    return <RouteLoader />
   }
 
   if (!user) {

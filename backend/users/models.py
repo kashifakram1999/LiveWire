@@ -1,6 +1,7 @@
 from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.utils import timezone
 
 
 class UserManager(BaseUserManager):
@@ -45,6 +46,7 @@ class User(AbstractUser):
     google_sub = models.CharField(
         max_length=255, blank=True, null=True, unique=True, help_text="Google OAuth subject identifier."
     )
+    last_active_at = models.DateTimeField(blank=True, null=True, default=timezone.now)
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []

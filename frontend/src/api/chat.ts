@@ -1,6 +1,19 @@
 import { apiClient } from "./client"
 import type { Conversation, Message } from "../types"
 
+export type VoiceMessagePayload = {
+  body?: string
+  audioBlob: Blob
+  audioDurationSeconds: number
+  audioMimeType?: string
+}
+
+export type TextMessagePayload = {
+  body: string
+}
+
+export type SendMessagePayload = VoiceMessagePayload | TextMessagePayload
+
 export const listConversations = async (): Promise<Conversation[]> => {
   const { data } = await apiClient.get<Conversation[]>("/chat/conversations/")
   return data
@@ -23,12 +36,46 @@ export const updateConversation = async (
   return data
 }
 
+export const markConversationRead = async (conversationId: number) => {
+  const { data } = await apiClient.post<Conversation>(`/chat/conversations/${conversationId}/read/`)
+  return data
+}
+
 export const listMessages = async (conversationId: number): Promise<Message[]> => {
   const { data } = await apiClient.get<Message[]>(`/chat/conversations/${conversationId}/messages/`)
   return data
 }
 
-export const sendMessage = async (conversationId: number, payload: { body: string }) => {
+export const sendMessage = async (conversationId: number, payload: SendMessagePayload) => {
+  if ("audioBlob" in payload) {
+    const filename = `voice-${Date.now()}.webm`
+    const audioFile =
+      payload.audioBlob instanceof File
+        ? payload.audioBlob
+        : new File([payload.audioBlob], filename, {
+            type: (payload.audioMimeType ?? payload.audioBlob.type) || "audio/webm",
+          })
+
+    const formData = new FormData()
+    if (payload.body) {
+      formData.append("body", payload.body)
+    }
+    formData.append("audio_file", audioFile, filename)
+    formData.append("audio_duration_seconds", payload.audioDurationSeconds.toString())
+    formData.append("audio_mime_type", audioFile.type)
+
+    const { data } = await apiClient.post<Message>(
+      `/chat/conversations/${conversationId}/messages/`,
+      formData,
+      {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+      },
+    )
+    return data
+  }
+
   const { data } = await apiClient.post<Message>(`/chat/conversations/${conversationId}/messages/`, payload)
   return data
 }

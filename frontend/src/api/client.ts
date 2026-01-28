@@ -12,10 +12,7 @@ export const apiClient = axios.create({
 apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = localStorage.getItem("lw_access_token")
   if (token) {
-    config.headers = {
-      ...config.headers,
-      Authorization: `Bearer ${token}`,
-    }
+    config.headers.set('Authorization', `Bearer ${token}`);
   }
   return config
 })

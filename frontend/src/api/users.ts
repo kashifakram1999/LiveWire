@@ -6,3 +6,7 @@ export const listUsers = async (search?: string): Promise<User[]> => {
   const { data } = await apiClient.get<User[]>("/auth/users/", { params })
   return data
 }
+
+export const updatePresence = async (): Promise<void> => {
+  await apiClient.post("/auth/me/presence/")
+}

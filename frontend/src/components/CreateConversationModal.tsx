@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react"
+import { createPortal } from "react-dom"
 
 import { listUsers } from "../api/users"
 import type { User } from "../types"
@@ -40,14 +41,20 @@ export const ConversationModal = ({
     loadUsers()
   }, [isOpen])
 
+  const participantKey = useMemo(() => initialParticipantIds.join(","), [initialParticipantIds])
+  const normalizedInitialParticipants = useMemo(
+    () => initialParticipantIds,
+    [participantKey],
+  )
+
   useEffect(() => {
     if (isOpen) {
-      setSelectedIds(initialParticipantIds)
+      setSelectedIds(normalizedInitialParticipants)
       setTitle(initialTitle)
       setSearch("")
       setError(null)
     }
-  }, [isOpen, initialParticipantIds, initialTitle])
+  }, [isOpen, initialTitle, participantKey, normalizedInitialParticipants])
 
   const filteredUsers = useMemo(() => {
     if (!search.trim()) return users
@@ -83,6 +90,8 @@ export const ConversationModal = ({
   }
 
   if (!isOpen) return null
+  const portalTarget = typeof document !== "undefined" ? document.body : null
+  if (!portalTarget) return null
 
   const headerTitle = mode === "create" ? "Start a conversation" : "Manage conversation"
   const headerSubtitle =
@@ -97,39 +106,40 @@ export const ConversationModal = ({
       ? "Create conversation"
       : "Save changes"
 
-  return (
+  return createPortal(
     <Fragment>
-      <div className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-lg rounded-xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
-          <header className="mb-4">
-            <h2 className="text-xl font-semibold text-white">{headerTitle}</h2>
-            <p className="text-sm text-slate-400">{headerSubtitle}</p>
+      <div className="fixed inset-0 z-[90] bg-slate-900/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed inset-0 z-[95] flex items-center justify-center px-4 py-6">
+        <div className="w-full max-w-xl rounded-[32px] border border-white/60 bg-white/95 p-8 text-slate-900 shadow-[0_20px_80px_rgba(15,23,42,0.35)]">
+          <header className="mb-6 space-y-1">
+            <p className="text-xs font-semibold uppercase tracking-[0.4em] text-slate-400">livewire</p>
+            <h2 className="text-2xl font-bold text-slate-900">{headerTitle}</h2>
+            <p className="text-sm text-slate-500">{headerSubtitle}</p>
           </header>
-          <div className="space-y-4">
+          <div className="space-y-5">
             <div>
-              <label className="block text-sm font-medium text-slate-300">Group title</label>
+              <label className="block text-sm font-semibold text-slate-600">Group title</label>
               <input
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
                 placeholder="Optional (used for groups)"
-                className="mt-1 w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 text-white focus:border-cyan-500 focus:outline-none"
+                className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-inner focus:border-indigo-400 focus:outline-none"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-300">Search users</label>
+              <label className="block text-sm font-semibold text-slate-600">Search users</label>
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search by email or name"
-                className="mt-1 w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 text-white focus:border-cyan-500 focus:outline-none"
+                className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-inner focus:border-indigo-400 focus:outline-none"
               />
             </div>
-            <div className="max-h-64 overflow-y-auto rounded border border-slate-800 bg-slate-950">
+            <div className="max-h-64 overflow-y-auto rounded-3xl border border-slate-200 bg-white/80 shadow-inner">
               {filteredUsers.length === 0 ? (
-                <p className="px-4 py-6 text-sm text-slate-400">No users found.</p>
+                <p className="px-5 py-8 text-center text-sm text-slate-500">No users found.</p>
               ) : (
-                <ul className="divide-y divide-slate-800">
+                <ul className="divide-y divide-slate-100">
                   {filteredUsers.map((user) => {
                     const isSelected = selectedIds.includes(user.id)
                     return (
@@ -137,19 +147,19 @@ export const ConversationModal = ({
                         <button
                           type="button"
                           onClick={() => toggleSelection(user.id)}
-                          className={`flex w-full items-center justify-between px-4 py-3 text-left transition ${
-                            isSelected ? "bg-cyan-500/20 text-white" : "text-slate-300 hover:bg-slate-800/70"
+                          className={`flex w-full items-center justify-between px-5 py-4 text-left text-sm transition ${
+                            isSelected
+                              ? "bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-600"
+                              : "text-slate-700 hover:bg-slate-50"
                           }`}
                         >
                           <div>
-                            <p className="text-sm font-medium">
-                              {user.display_name ?? user.email}
-                            </p>
+                            <p className="font-semibold">{user.display_name ?? user.email}</p>
                             <p className="text-xs text-slate-400">{user.email}</p>
                           </div>
                           <span
-                            className={`h-4 w-4 rounded-full border ${
-                              isSelected ? "border-cyan-400 bg-cyan-400" : "border-slate-600"
+                            className={`h-5 w-5 rounded-full border ${
+                              isSelected ? "border-indigo-400 bg-indigo-400" : "border-slate-300"
                             }`}
                           />
                         </button>
@@ -160,24 +170,25 @@ export const ConversationModal = ({
               )}
             </div>
           </div>
-          {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
-          <div className="mt-6 flex justify-end space-x-3">
+          {error && <p className="mt-4 text-sm font-medium text-red-500">{error}</p>}
+          <div className="mt-8 flex justify-end space-x-3">
             <button
               onClick={onClose}
-              className="rounded border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
+              className="rounded-full border border-slate-200 px-5 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
             >
               Cancel
             </button>
             <button
               onClick={handleSubmit}
               disabled={isSubmitting}
-              className="rounded bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60"
+              className="rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 px-6 py-2 text-sm font-semibold text-white shadow-lg transition hover:shadow-xl disabled:opacity-50"
             >
               {submitLabel}
             </button>
           </div>
         </div>
       </div>
-    </Fragment>
+    </Fragment>,
+    portalTarget,
   )
 }

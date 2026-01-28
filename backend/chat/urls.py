@@ -3,6 +3,7 @@ from django.urls import path
 from .views import (
     ConversationDetailView,
     ConversationListCreateView,
+    ConversationMarkReadView,
     MessageDetailView,
     MessageListCreateView,
 )
@@ -16,6 +17,11 @@ urlpatterns = [
         "conversations/<int:conversation_id>/messages/",
         MessageListCreateView.as_view(),
         name="message_list",
+    ),
+    path(
+        "conversations/<int:conversation_id>/read/",
+        ConversationMarkReadView.as_view(),
+        name="conversation_mark_read",
     ),
     path(
         "conversations/<int:conversation_id>/messages/<int:message_id>/",
