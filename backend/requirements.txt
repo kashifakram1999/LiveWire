@@ -7,5 +7,6 @@ django-rest-auth
 django-cors-headers
 channels
 channels-redis
+daphne
 psycopg2-binary
 djangorestframework-simplejwt
